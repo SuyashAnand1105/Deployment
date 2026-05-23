@@ -5,7 +5,8 @@ import os
 import io
 import json
 from openai import OpenAI
-
+from dotenv import load_dotenv
+load_dotenv()
 app = FastAPI()
 
 app.add_middleware(
