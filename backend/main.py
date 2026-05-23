@@ -1,14 +1,17 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import PyPDF2
-import os
-import io
-import json
 from openai import OpenAI
 from dotenv import load_dotenv
+import os
+
+# Load environment variables
 load_dotenv()
+
+# FastAPI app
 app = FastAPI()
 
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,72 +20,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OpenAI / NexusAI client
+# Get API key from environment
+api_key = os.getenv("NEXUS_API_KEY")
+
+if not api_key:
+    raise ValueError("NEXUS_API_KEY environment variable is missing")
+
+# OpenAI client
 client = OpenAI(
-    api_key=os.environ["NEXUS_API_KEY"],
+    api_key=api_key,
     base_url="https://apidev.navigatelabsai.com"
 )
 
+# Request body model
+class PromptRequest(BaseModel):
+    user_prompt: str
+
+# Root endpoint
 @app.get("/")
-def root():
-    return {"message": "NexusAI Resume Parser Backend is running"}
+def read_root():
+    return {
+        "message": "NexusAI backend is running successfully"
+    }
 
-@app.post("/api/parse")
-async def parse_resume(resume: UploadFile = File(...)):
+# Welcome endpoint
+@app.get("/welcome")
+def welcome():
+    return {
+        "message": "Welcome to Navi Chat"
+    }
+
+# AI endpoint
+@app.post("/run_task")
+async def run_task(req: PromptRequest):
     try:
-        content = await resume.read()
-
-        text = ""
-
-        if resume.filename.lower().endswith(".pdf"):
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-            for page in pdf_reader.pages:
-                text += (page.extract_text() or "") + "\n"
-        else:
-            try:
-                text = content.decode("utf-8")
-            except:
-                raise HTTPException(status_code=400, detail="Only PDF supported")
-
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="Empty resume text")
-
-        system_prompt = """
-        You are an expert AI resume parser.
-        Return ONLY valid JSON in this structure:
-        {
-          "personalInfo": {
-            "name": "",
-            "email": "",
-            "phone": "",
-            "location": "",
-            "linkedIn": ""
-          },
-          "summary": "",
-          "skills": [],
-          "experience": [],
-          "education": []
-        }
-        """
-
         response = client.chat.completions.create(
             model="gemini-2.5-flash",
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a personal AI tutor. "
+                        "Explain everything in simple layman terms. "
+                        "Keep responses short, precise, and factual."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": req.user_prompt
+                }
             ]
         )
 
-        result_text = response.choices[0].message.content.strip()
+        return {
+            "response": response.choices[0].message.content
+        }
 
-        if result_text.startswith("```json"):
-            result_text = result_text.replace("```json", "").replace("```", "")
-
-        parsed_data = json.loads(result_text)
-
-        return {"success": True, "data": parsed_data}
-
-    except json.JSONDecodeError:
-        return {"success": False, "error": "Invalid JSON from model"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
